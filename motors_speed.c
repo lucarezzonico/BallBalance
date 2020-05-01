@@ -96,7 +96,7 @@ float speed_sum_acceleration(float *accel){
 	return speed_acceleration;
 }
 
-// PI regulator to regulate the direction angle of the robot with the imu
+// PID regulator to regulate the direction angle of the robot with the imu
 float imu_rotation_regulator(float *accel){
 
 	float error = 0;
