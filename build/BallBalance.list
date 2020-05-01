@@ -1909,10 +1909,10 @@ Disassembly of section .text:
  80017ea:	f7ff ff09 	bl	8001600 <__stack_chk_fail>
  80017ee:	bf00      	nop
  80017f0:	8d192ce2 	.word	0x8d192ce2
- 80017f4:	3feb2724 	.word	0x3feb2724
+ 80017f4:	3fdb2724 	.word	0x3fdb2724
  80017f8:	621d9901 	.word	0x621d9901
  80017fc:	4078dfc2 	.word	0x4078dfc2
- 8001800:	3f19999a 	.word	0x3f19999a
+ 8001800:	3e99999a 	.word	0x3e99999a
  8001804:	20000800 	.word	0x20000800
  8001808:	2000125c 	.word	0x2000125c
  800180c:	47d6d800 	.word	0x47d6d800
