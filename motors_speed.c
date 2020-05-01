@@ -18,7 +18,7 @@
 //#define	D								0.17
 #define	G								9.81
 //#define	MOTORS_SPEED_LIMIT_MS			0.13
-#define	KI_ACC							4 //pow(MOTORS_SPEED_LIMIT_MS,2)/(2*D*sin(STALL_ANGLE)*G) / FREQUENCY 			// 5
+#define	KI_ACC							3 //pow(MOTORS_SPEED_LIMIT_MS,2)/(2*D*sin(STALL_ANGLE)*G) / FREQUENCY 			// 5
 //#define ERROR_YAW_ANGLE_THRESHOLD		(M_PI * 5/180) // 5°
 //#define ERROR_PITCH_ANGLE_THRESHOLD		(M_PI * 5/180) // 5°
 //#define PITCH_ANGLE_THRESHOLD			(M_PI * 0.2/180) // 0.2°
