@@ -120,8 +120,6 @@ float imu_rotation_regulator(float *accel){
 		sum_error = -MAX_SUM_ERROR;
 	}
 
-//	angle_regulation = KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error - previous_error);		// KI = ???
-
 	if (sqrt(pow(accel[Y_AXIS],2)+pow(accel[X_AXIS],2)) > ROTATION_THRESHOLD)
 	{
 		rotation_regulation = KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error - previous_error);		// KI = ???
