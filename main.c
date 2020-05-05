@@ -7,18 +7,13 @@
 #include "hal.h"
 #include "memory_protection.h"
 #include <main.h>
-
 #include <motors.h>
 #include <sensors/imu.h>
 #include <sensors/proximity.h>
-
-#include <chprintf.h>
-
-#include <obstacle.h>
-
 #include <motors_speed.h>
 
-//#define NB_SAMPLES_IMU_OFFSET     200
+#include <chprintf.h>
+#include <obstacle.h>
 
 messagebus_t bus;
 MUTEX_DECL(bus_lock);
@@ -43,9 +38,6 @@ int main(void)
     chSysInit();
     mpu_init();
 
-
-
-
     // starting sensors
     imu_start();
     proximity_start();
@@ -58,48 +50,31 @@ int main(void)
     // inits the inter process communication bus
     messagebus_init(&bus, &bus_lock, &bus_condvar);
 
-// ?????
-
-//    messagebus_topic_t *prox_topic = messagebus_find_topic_blocking(&bus, "/proximity");
-//    proximity_msg_t prox_values;
-
     //wait 2 seconds to be sure the e-puck is in a stable position
     chThdSleepMilliseconds(2000);
 
 
-    //calibrate the imu
-    //imu_compute_offset(imu_topic, NB_SAMPLES_IMU_OFFSET);
-
     //calibrate the proximity sensors
-//    calibrate_ir();
+    calibrate_ir();
 
     //calibrate the imu
     calibrate_acc();
 
+    // start control of motors speed with imu and proximity sensors
     motors_speed_start();
 
-//    right_motor_set_speed(600);
-//    left_motor_set_speed(600);
 
 //  pi_regulator_start();
 //    obstacle_start();
-
-//    right_motor_set_speed(MOTOR_SPEED_LIMIT);
-//    left_motor_set_speed(-MOTOR_SPEED_LIMIT);
-
 //    angle_regulator_start();
 
     /* Infinite loop. */
     while (1) {
     	//wait for new measures to be published
-//    	messagebus_topic_wait(imu_topic, &imu_values, sizeof(imu_values));
-
-//    	messagebus_topic_wait(prox_topic, &prox_values, sizeof(prox_values));
 
 //    	chprintf((BaseSequentialStream *)&SD3, "calibrated of IR3 = %d   \r\n\n", get_calibrated_prox(5));
 
 //    	chprintf((BaseSequentialStream *)&SD3, "dist of IR3 = %d		\r\n\n", obstacle_dist(5));
-
 
     	//waits 1 second
         chThdSleepMilliseconds(1000);
