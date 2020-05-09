@@ -13,7 +13,6 @@
 #include <motors_speed.h>
 
 #include <chprintf.h>
-#include <obstacle.h>
 
 messagebus_t bus;
 MUTEX_DECL(bus_lock);
@@ -53,7 +52,6 @@ int main(void)
     //wait 2 seconds to be sure the e-puck is in a stable position
     chThdSleepMilliseconds(2000);
 
-
     //calibrate the proximity sensors
     calibrate_ir();
 
@@ -63,18 +61,13 @@ int main(void)
     // start control of motors speed with imu and proximity sensors
     motors_speed_start();
 
-
-//  pi_regulator_start();
-//    obstacle_start();
-//    angle_regulator_start();
+    systime_t time1, time2;
 
     /* Infinite loop. */
-    while (1) {
-    	//wait for new measures to be published
-
+    while (true) {
 //    	chprintf((BaseSequentialStream *)&SD3, "calibrated of IR3 = %d   \r\n\n", get_calibrated_prox(5));
 
-//    	chprintf((BaseSequentialStream *)&SD3, "dist of IR3 = %d		\r\n\n", obstacle_dist(5));
+//    	chprintf((BaseSequentialStream *)&SD3, "time = %d		\r\n\n", ST2MS(time2-time1);
 
     	//waits 1 second
         chThdSleepMilliseconds(1000);

@@ -4,35 +4,28 @@
 #include <usbcfg.h>
 #include <chprintf.h>
 
-
 #include <main.h>
 #include <motors.h>
 #include <motors_speed.h>
 #include <sensors/imu.h>
 #include <sensors/proximity.h>
 
-#define	MOTORS_SPEED_THD_SIZE			512
-#define	IMU_MEAN_VALUE_THD_SIZE			512
-#define	FREQUENCY						50		//50Hz
-#define NB_SAMPLE						5
-#define STALL_ANGLE						(M_PI * 25/180) // 25° (angle de décrochage)
-#define	ERROR_ACC_THRESHOLD				0.5
-#define	ACC_THRESHOLD					10
-#define	BRAKING							pow(0.99,100/FREQUENCY)
-//#define	D								0.17
-#define	G								9.81
-//#define	MOTORS_SPEED_LIMIT_MS			0.13
-#define	KI_ACC							4 * 100/FREQUENCY //pow(MOTORS_SPEED_LIMIT_MS,2)/(2*D*sin(STALL_ANGLE)*G) / FREQUENCY 			// 5
-//#define ERROR_YAW_ANGLE_THRESHOLD		(M_PI * 5/180) // 5°
-//#define ERROR_PITCH_ANGLE_THRESHOLD		(M_PI * 5/180) // 5°
-//#define PITCH_ANGLE_THRESHOLD			(M_PI * 0.2/180) // 0.2°
-#define KP_ROTATION						(MOTOR_SPEED_LIMIT/(sin(STALL_ANGLE)*G/2))
-#define KI_ROTATION 					1 * 100/FREQUENCY	//must not be zero
-#define KD_ROTATION						10 * FREQUENCY/100
-//#define ROTATION_THRESHOLD				sqrt(2)*ERROR_ACC_THRESHOLD
-#define MAX_SUM_ERROR 					(MOTOR_SPEED_LIMIT/KI_ROTATION)
-#define ROTATION_CORRECTION				200
-#define	PROX_LIMIT						500
+#define	G							9.81										//m/s²
+#define	MOTORS_SPEED_THD_SIZE		256
+#define	IMU_MEAN_VALUE_THD_SIZE		512
+#define	FREQUENCY					50											//Hz
+#define NB_SAMPLE					5											//number of sample to calculate the mean value of the imu
+#define STALL_ANGLE					M_PI * 25/180 								//25° (angle de décrochage)
+#define	ERROR_ACC_THRESHOLD			0.5											//0.5 m/s²
+#define	ACC_THRESHOLD				10											//10 step/s
+#define	BRAKING						pow(0.99,100/FREQUENCY)						//multiply the speed by 0.99 each time it passes through the thread
+#define	KI_ACC						4 * 100/FREQUENCY							//we have computed the coefficient at 100Hz
+#define KP_ROTATION					MOTOR_SPEED_LIMIT / (sin(STALL_ANGLE)*G/2)	//we set the maximum speed at half of the stall slope
+#define KI_ROTATION 				1 * 100/FREQUENCY							//we have computed the coefficients at 100Hz
+#define KD_ROTATION					10 * FREQUENCY/100
+#define MAX_SUM_ERROR 				MOTOR_SPEED_LIMIT/KI_ROTATION
+#define ROTATION_CORRECTION			200
+#define	PROX_LIMIT					500											//500 corresponds to a reasonable distance to see the effect; 800 corresponds to the limit
 
 enum{
 	IR1,
@@ -45,97 +38,50 @@ enum{
 	IR8
 };
 
+//a table with the mean acceleration on the 3 axis
 static float mean_accel[NB_AXIS];
 
-//float get_yaw_angle(float *accel){
-//	/*
-//	* Quadrant:
-//	*       FRONT
-//	*       ####
-//	*    #    0   #
-//	*  #            #
-//	* #PI/2 TOP -PI/2#
-//	* #     VIEW     #
-//	*  #            #
-//	*    # PI|-PI #
-//	*       ####
-//	*       BACK
-//	*/
-//
-//	// angle in rad with 0 being the front of the e-puck2 (-Y axis of the IMU)
-//	// see quadrant above
-//	float yaw_angle = atan2(accel[X_AXIS], -accel[Y_AXIS]);
-//	if(yaw_angle > M_PI){
-//		yaw_angle = -2 * M_PI + yaw_angle;
-//	}
-//	return yaw_angle;
-//}
-
-//float get_pitch_angle(float *accel){
-//	/*
-//	* Quadrant:
-//	* 		#############################
-//	* 		#		   -PI/2			#
-//	* 		#							#
-//	* FRONT # 0		 SIDE VIEW	 -PI|PI # BACK
-//	* 		#							#
-//	* 		#			PI/2			#
-//	* 		#############################
-//	*/
-//
-//	// angle in rad with 0 being the front of the e-puck2 (-Y axis of the IMU)
-//	// see quadrant above
-//	float pitch_angle = M_PI/2 - atan2(-accel[Z_AXIS], -accel[Y_AXIS]);
-//	if(pitch_angle > M_PI){
-//		pitch_angle = -2 * M_PI + pitch_angle;
-//	}
-//	return pitch_angle;
-//}
-
-// Integrate acceleration given by the imu to get the speed of the robot on a slope
+//integrate the acceleration given by the imu to get the speed of the robot on a slope
 float speed_sum_acceleration(unsigned int *delta){
 
-	static float speed_acceleration = 0, previous_speed;
+	static float speed = 0;
 
-	previous_speed = speed_acceleration;
-
-	if (fabs(mean_accel[Y_AXIS]) > ERROR_ACC_THRESHOLD){
-		speed_acceleration += (-mean_accel[Y_AXIS]) * KI_ACC;
-	} else {
-		if (fabs(speed_acceleration) > ACC_THRESHOLD)
-			speed_acceleration *= BRAKING;
+	//due to imprecise measure
+	if (fabs(mean_accel[Y_AXIS]) > ERROR_ACC_THRESHOLD)
+		speed += (-mean_accel[Y_AXIS]) * KI_ACC;
+	else
+	{
+		//if the e-puck had a speed and we put it at the horizontal, the e-puck slowly brakes
+		if (fabs(speed) > ACC_THRESHOLD)
+			speed *= BRAKING;
 		else
-			speed_acceleration = 0;
+			speed = 0;
 	}
-
-	//if speed_acceleration changes sign, we set the speed to 0 for 10ms
-	if (speed_acceleration*previous_speed < 0)
-		speed_acceleration = 0;
 
 	//we set a maximum and a minimum for the sum to avoid an uncontrolled growth
-	if(speed_acceleration > MOTOR_SPEED_LIMIT){
-		speed_acceleration = MOTOR_SPEED_LIMIT;
-	} else if (speed_acceleration < -MOTOR_SPEED_LIMIT){
-		speed_acceleration = -MOTOR_SPEED_LIMIT;
-	}
+	if (speed > MOTOR_SPEED_LIMIT)
+		speed = MOTOR_SPEED_LIMIT;
+	else if (speed < -MOTOR_SPEED_LIMIT)
+		speed = -MOTOR_SPEED_LIMIT;
 
-	if ((speed_acceleration > 0 && (delta[IR1] > PROX_LIMIT || delta[IR2] > PROX_LIMIT || delta[IR7] > PROX_LIMIT || delta[IR8] > PROX_LIMIT)) ||
-		(speed_acceleration < 0 && (delta[IR4] > PROX_LIMIT || delta[IR5] > PROX_LIMIT)))
-		speed_acceleration = 0;
+	//check for the presence of a wall in front or back of the e_puck when e_puck goes respectively forward or backward
+	if ((speed > 0 && (delta[IR1] > PROX_LIMIT || delta[IR8] > PROX_LIMIT)) ||
+		(speed < 0 && ((delta[IR4] > PROX_LIMIT && (delta[IR5] > PROX_LIMIT || delta[IR3] < PROX_LIMIT)) ||
+				       (delta[IR5] > PROX_LIMIT && (delta[IR4] > PROX_LIMIT || delta[IR6] < PROX_LIMIT)))))
+		speed = 0;
 
-	return speed_acceleration;
+	return speed;
 }
 
-// PID regulator to regulate the direction angle of the robot with the imu
+//PID regulator to regulate the direction angle of the robot with the imu
 float imu_rotation_regulator(void){
 
 	float error = 0;
-	float rotation_regulation = 0;
 
 	static float sum_error = 0, previous_error;
 
-	previous_error = error;
-	error = mean_accel[X_AXIS];
+	previous_error = error;						//simulate the derivative term
+	error = mean_accel[X_AXIS];					//we want to put the acceleration on x axis to 0
 
 	//due to imprecise measure
 	if (fabs(error) < ERROR_ACC_THRESHOLD)
@@ -145,33 +91,19 @@ float imu_rotation_regulator(void){
 		previous_error = 0;
 	}
 
+	//if the e_puck goes backward the rotation is inverted
 	if (mean_accel[Y_AXIS] > 0)
 		error = -error;
 
-	sum_error += error;
+	sum_error += error;							//simulate the integrative term
 
 	//we set a maximum and a minimum for the sum to avoid an uncontrolled growth
-	if(sum_error > MAX_SUM_ERROR){
+	if (sum_error > MAX_SUM_ERROR)
 		sum_error = MAX_SUM_ERROR;
-	} else if(sum_error < -MAX_SUM_ERROR){
+	else if (sum_error < -MAX_SUM_ERROR)
 		sum_error = -MAX_SUM_ERROR;
-	}
 
-//	if (sqrt(pow(accel[Y_AXIS],2)+pow(accel[X_AXIS],2)) > ROTATION_THRESHOLD)
-//	{
-//		rotation_regulation = KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error - previous_error);		// KI = ???
-//
-//		if (accel[Y_AXIS] > 0)
-//			return -rotation_regulation;
-//		else
-//			return rotation_regulation;
-//	}
-//	else
-//		return 0;
-
-	rotation_regulation = KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error - previous_error);
-
-	return rotation_regulation;
+	return KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error-previous_error);
 }
 
 //motors control thread
@@ -181,65 +113,54 @@ static THD_FUNCTION(Motors_speed, arg) {
     chRegSetThreadName(__FUNCTION__);
     (void)arg;
 
-//    messagebus_topic_t *imu_topic = messagebus_find_topic_blocking(&bus, "/imu");
-//    static imu_msg_t imu_values;
-
     messagebus_topic_t *prox_topic = messagebus_find_topic_blocking(&bus, "/proximity");
     static proximity_msg_t prox_values;
 
-    //create a pointer to the array for shorter name
-//    float *accel = imu_values.acceleration, *previous_accel = NULL;
+    //create a pointer for shorter name to get proximity values
     unsigned int *delta = prox_values.delta;
 
-	systime_t time;
+	systime_t time, time1, time2, time3;
 
     float rotation_regulation = 0;
-    float speed_acceleration = 0;
-//    float target_angle = 0;
-//    float yaw_angle = 0;
+    float speed = 0;
 
     while(true)
     {
     	time = chVTGetSystemTime();
 
-//    	messagebus_topic_wait(imu_topic, &imu_values, sizeof(imu_values));		//250Hz
     	messagebus_topic_wait(prox_topic, &prox_values, sizeof(prox_values));	//100Hz
 
-    	speed_acceleration = speed_sum_acceleration(delta);
+    	time1 = chVTGetSystemTime();
 
-/*
-    	yaw_angle = get_yaw_angle(accel);
-		if (fabs(yaw_angle) < M_PI/2){
-			target_angle = 0;
-		} else if (yaw_angle >= M_PI/2){
-			target_angle = M_PI;
-		} else {
-			target_angle = -M_PI;
-		}
-*/
+    	speed = speed_sum_acceleration(delta);
 
     	rotation_regulation = imu_rotation_regulator();
 
-    	if ((speed_acceleration > 0 && delta[IR3] > PROX_LIMIT) ||
-    		(speed_acceleration < 0 && delta[IR6] > PROX_LIMIT))
-    		rotation_regulation += ROTATION_CORRECTION;
-    	else if ((speed_acceleration > 0 && delta[IR6] > PROX_LIMIT) ||
-    			 (speed_acceleration < 0 && delta[IR3] > PROX_LIMIT))
-    		rotation_regulation -= ROTATION_CORRECTION;
+    	/* check for the presence of a wall on the sides of the e_puck
+    	 * if the speed is too high, we put the speed on rotation
+    	 * ROTATION_CORRECTION impose a minimum rotation speed when the e_puck is slow */
+    	if ((speed > 0 && (delta[IR3] > PROX_LIMIT || delta[IR2] > PROX_LIMIT)) ||
+    		(speed < 0 && (delta[IR6] > PROX_LIMIT || (delta[IR5] > PROX_LIMIT && delta[IR4] < PROX_LIMIT))))
+    		rotation_regulation += (ROTATION_CORRECTION + fabs(speed));
+    	else if ((speed > 0 && (delta[IR6] > PROX_LIMIT || delta[IR7] > PROX_LIMIT)) ||
+    			 (speed < 0 && (delta[IR3] > PROX_LIMIT || (delta[IR4] > PROX_LIMIT && delta[IR5] < PROX_LIMIT))))
+    		rotation_regulation -= (ROTATION_CORRECTION + fabs(speed));
 
-    	right_motor_set_speed((int16_t)(speed_acceleration + rotation_regulation));
-    	left_motor_set_speed((int16_t)(speed_acceleration - rotation_regulation));
+    	right_motor_set_speed((int16_t)(speed + rotation_regulation));
+    	left_motor_set_speed((int16_t)(speed - rotation_regulation));
 
-    	chprintf((BaseSequentialStream *)&SD3, "mean_Ax = %f		mean_Ay = %f		\r\n\n", mean_accel[X_AXIS], mean_accel[Y_AXIS]);
+    	time2 = chVTGetSystemTime();
 
-//    	if (previous_accel && previous_accel[Y_AXIS]*accel[Y_AXIS] < 0)
-//    		chThdSleepMilliseconds(100/FREQUENCY);
-//    	else
-    		//50Hz
-    		chThdSleepUntilWindowed(time, time + MS2ST(1000/FREQUENCY));
+    	//FREQUENCY [Hz]
+    	chThdSleepUntilWindowed(time, time + MS2ST(1000/FREQUENCY));
+
+    	time3 = chVTGetSystemTime();
+
+//    	chprintf((BaseSequentialStream *)&SD3, "time_sleep = %d		time_total = %d		\r\n\n", ST2MS(time3-time2), ST2MS(time3-time));
     }
 }
 
+//calculate the mean value of the imu on NB_SAMPLE values
 static THD_WORKING_AREA(waImu_mean_value, IMU_MEAN_VALUE_THD_SIZE);
 static THD_FUNCTION(Imu_mean_value, arg) {
 
@@ -249,13 +170,15 @@ static THD_FUNCTION(Imu_mean_value, arg) {
     messagebus_topic_t *imu_topic = messagebus_find_topic_blocking(&bus, "/imu");
     static imu_msg_t imu_values;
 
+    //create a pointer for shorter name to get acceleration values
     float *accel = imu_values.acceleration;
 
+    //cyclic table to store samples of the acceleration on the 3 axis
     static float accel_sample[NB_AXIS][NB_SAMPLE];
 
 	float sum_x_axis = 0, sum_y_axis = 0, sum_z_axis = 0;
 
-	uint8_t counter;
+	uint8_t counter = 0;
 
     for (uint8_t i = 0; i < NB_AXIS; i++)
     {
@@ -266,33 +189,38 @@ static THD_FUNCTION(Imu_mean_value, arg) {
     counter = 0;
 
     while(true)
-        {
-        	messagebus_topic_wait(imu_topic, &imu_values, sizeof(imu_values));		//250Hz
+    {
+    	messagebus_topic_wait(imu_topic, &imu_values, sizeof(imu_values));		//250Hz
 
-        	sum_x_axis -= accel_sample[X_AXIS][counter];
-        	sum_y_axis -= accel_sample[Y_AXIS][counter];
-        	sum_z_axis -= accel_sample[Z_AXIS][counter];
+        //subtract oldest acceleration values
+        sum_x_axis -= accel_sample[X_AXIS][counter];
+        sum_y_axis -= accel_sample[Y_AXIS][counter];
+        sum_z_axis -= accel_sample[Z_AXIS][counter];
 
-        	accel_sample[X_AXIS][counter] = accel[X_AXIS];
-        	accel_sample[Y_AXIS][counter] = accel[Y_AXIS];
-        	accel_sample[Z_AXIS][counter] = accel[Z_AXIS];
+        //update acceleration values
+        accel_sample[X_AXIS][counter] = accel[X_AXIS];
+        accel_sample[Y_AXIS][counter] = accel[Y_AXIS];
+        accel_sample[Z_AXIS][counter] = accel[Z_AXIS];
 
-        	sum_x_axis += accel_sample[X_AXIS][counter];
-        	sum_y_axis += accel_sample[Y_AXIS][counter];
-        	sum_z_axis += accel_sample[Z_AXIS][counter];
+        //add updated acceleration values
+        sum_x_axis += accel_sample[X_AXIS][counter];
+        sum_y_axis += accel_sample[Y_AXIS][counter];
+        sum_z_axis += accel_sample[Z_AXIS][counter];
 
-        	mean_accel[X_AXIS] = sum_x_axis/NB_SAMPLE;
-        	mean_accel[Y_AXIS] = sum_y_axis/NB_SAMPLE;
-        	mean_accel[Z_AXIS] = sum_z_axis/NB_SAMPLE;
+        //compute average
+        mean_accel[X_AXIS] = sum_x_axis/NB_SAMPLE;
+        mean_accel[Y_AXIS] = sum_y_axis/NB_SAMPLE;
+        mean_accel[Z_AXIS] = sum_z_axis/NB_SAMPLE;
 
-        	counter++;
+        counter++;
 
-        	if (counter >= NB_SAMPLE)
-        		counter = 0;
-        }
+        //manage cyclic table
+        if (counter >= NB_SAMPLE)
+        	counter = 0;
+    }
 }
 
-//start the thread
+//start the threads
 void motors_speed_start(void)
 {
 	chThdCreateStatic(waMotors_speed, sizeof(waMotors_speed), NORMALPRIO, Motors_speed, NULL);
