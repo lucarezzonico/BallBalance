@@ -12,8 +12,6 @@
 #include <sensors/proximity.h>
 #include <motors_speed.h>
 
-#include <chprintf.h>
-
 #define SLEEP_TIME			2000		//ms
 
 messagebus_t bus;
