@@ -10,22 +10,22 @@
 #include <sensors/imu.h>
 #include <sensors/proximity.h>
 
-#define	G							9.81										//m/s²
+#define	G							9.81													//m/s²
 #define	MOTORS_SPEED_THD_SIZE		256
 #define	IMU_MEAN_VALUE_THD_SIZE		512
-#define	FREQUENCY					50											//Hz
-#define NB_SAMPLE					5											//number of sample to calculate the mean value of the imu
-#define STALL_ANGLE					M_PI * 25/180 								//25° (angle de décrochage)
-#define	ERROR_ACC_THRESHOLD			0.5											//0.5 m/s²
-#define	ACC_THRESHOLD				10											//10 step/s
-#define	BRAKING						pow(0.99,100/FREQUENCY)						//multiply the speed by 0.99 each time it passes through the thread
-#define	KI_ACC						4 * 100/FREQUENCY							//we have computed the coefficient at 100Hz
-#define KP_ROTATION					MOTOR_SPEED_LIMIT / (sin(STALL_ANGLE)*G/2)	//we set the maximum speed at half of the stall slope
-#define KI_ROTATION 				1 * 100/FREQUENCY							//we have computed the coefficients at 100Hz
+#define	FREQUENCY					50														//Hz
+#define NB_SAMPLE					5														//number of sample to calculate the mean value of the imu
+#define STALL_ANGLE					M_PI * 25/180 											//25°
+#define	ERROR_ACC_THRESHOLD			0.5														//0.5 m/s²
+#define	SPEED_THRESHOLD				10														//10 step/s
+#define	BRAKING						pow(0.99,100/FREQUENCY)									//multiply the speed by 0.99 each time it passes through the thread
+#define	KI_ACC						(MOTOR_SPEED_LIMIT/(sin(STALL_ANGLE)*G/1.5)) / FREQUENCY//we have computed the coefficient at 100Hz
+#define KP_ROTATION					MOTOR_SPEED_LIMIT / (sin(STALL_ANGLE)*G/2)				//we set the maximum speed at half of the stall slope
+#define KI_ROTATION 				1 * 100/FREQUENCY										//we have computed the coefficients at 100Hz
 #define KD_ROTATION					10 * FREQUENCY/100
 #define MAX_SUM_ERROR 				MOTOR_SPEED_LIMIT/KI_ROTATION
 #define ROTATION_CORRECTION			200
-#define	PROX_LIMIT					500											//500 corresponds to a reasonable distance to see the effect; 800 corresponds to the limit
+#define	PROX_LIMIT					500														//500 corresponds to a reasonable distance to see the effect; 800 corresponds to the limit
 
 enum{
 	IR1,
@@ -47,12 +47,13 @@ float speed_sum_acceleration(unsigned int *delta){
 	static float speed = 0;
 
 	//due to imprecise measure
+	//we subtract the current mean acceleration because forward direction is -y
 	if (fabs(mean_accel[Y_AXIS]) > ERROR_ACC_THRESHOLD)
-		speed += (-mean_accel[Y_AXIS]) * KI_ACC;
+		speed -= mean_accel[Y_AXIS] * KI_ACC;
 	else
 	{
 		//if the e-puck had a speed and we put it at the horizontal, the e-puck slowly brakes
-		if (fabs(speed) > ACC_THRESHOLD)
+		if (fabs(speed) > SPEED_THRESHOLD)
 			speed *= BRAKING;
 		else
 			speed = 0;
@@ -106,9 +107,24 @@ float imu_rotation_regulator(void){
 	return KP_ROTATION  * error + KI_ROTATION  * sum_error + KD_ROTATION * (error-previous_error);
 }
 
+/* check for the presence of a wall on the sides of the e_puck
+ * if the speed is too high, we put the speed on rotation
+ * ROTATION_CORRECTION impose a minimum rotation speed when the e_puck is slow */
+float obstacle_detection (float speed, unsigned int *delta){
+
+	if ((speed > 0 && (delta[IR3] > PROX_LIMIT || delta[IR2] > PROX_LIMIT)) ||
+		(speed < 0 && (delta[IR6] > PROX_LIMIT || (delta[IR5] > PROX_LIMIT && delta[IR4] < PROX_LIMIT))))
+		return ROTATION_CORRECTION + fabs(speed);
+	else if ((speed > 0 && (delta[IR6] > PROX_LIMIT || delta[IR7] > PROX_LIMIT)) ||
+			 (speed < 0 && (delta[IR3] > PROX_LIMIT || (delta[IR4] > PROX_LIMIT && delta[IR5] < PROX_LIMIT))))
+		return -(ROTATION_CORRECTION + fabs(speed));
+	else
+		return 0;
+}
+
 //motors control thread
 static THD_WORKING_AREA(waMotors_speed, MOTORS_SPEED_THD_SIZE);
-static THD_FUNCTION(Motors_speed, arg) {
+static THD_FUNCTION(Motors_speed, arg){
 
     chRegSetThreadName(__FUNCTION__);
     (void)arg;
@@ -119,7 +135,7 @@ static THD_FUNCTION(Motors_speed, arg) {
     //create a pointer for shorter name to get proximity values
     unsigned int *delta = prox_values.delta;
 
-	systime_t time, time1, time2, time3;
+	systime_t time;
 
     float rotation_regulation = 0;
     float speed = 0;
@@ -130,39 +146,21 @@ static THD_FUNCTION(Motors_speed, arg) {
 
     	messagebus_topic_wait(prox_topic, &prox_values, sizeof(prox_values));	//100Hz
 
-    	time1 = chVTGetSystemTime();
-
     	speed = speed_sum_acceleration(delta);
 
-    	rotation_regulation = imu_rotation_regulator();
-
-    	/* check for the presence of a wall on the sides of the e_puck
-    	 * if the speed is too high, we put the speed on rotation
-    	 * ROTATION_CORRECTION impose a minimum rotation speed when the e_puck is slow */
-    	if ((speed > 0 && (delta[IR3] > PROX_LIMIT || delta[IR2] > PROX_LIMIT)) ||
-    		(speed < 0 && (delta[IR6] > PROX_LIMIT || (delta[IR5] > PROX_LIMIT && delta[IR4] < PROX_LIMIT))))
-    		rotation_regulation += (ROTATION_CORRECTION + fabs(speed));
-    	else if ((speed > 0 && (delta[IR6] > PROX_LIMIT || delta[IR7] > PROX_LIMIT)) ||
-    			 (speed < 0 && (delta[IR3] > PROX_LIMIT || (delta[IR4] > PROX_LIMIT && delta[IR5] < PROX_LIMIT))))
-    		rotation_regulation -= (ROTATION_CORRECTION + fabs(speed));
+    	rotation_regulation = imu_rotation_regulator() + obstacle_detection(speed, delta);
 
     	right_motor_set_speed((int16_t)(speed + rotation_regulation));
     	left_motor_set_speed((int16_t)(speed - rotation_regulation));
 
-    	time2 = chVTGetSystemTime();
-
     	//FREQUENCY [Hz]
-    	chThdSleepUntilWindowed(time, time + MS2ST(1000/FREQUENCY));
-
-    	time3 = chVTGetSystemTime();
-
-//    	chprintf((BaseSequentialStream *)&SD3, "time_sleep = %d		time_total = %d		\r\n\n", ST2MS(time3-time2), ST2MS(time3-time));
+    	chThdSleepUntilWindowed(time, time + S2ST(1/FREQUENCY));
     }
 }
 
 //calculate the mean value of the imu on NB_SAMPLE values
 static THD_WORKING_AREA(waImu_mean_value, IMU_MEAN_VALUE_THD_SIZE);
-static THD_FUNCTION(Imu_mean_value, arg) {
+static THD_FUNCTION(Imu_mean_value, arg){
 
     chRegSetThreadName(__FUNCTION__);
     (void)arg;
@@ -221,8 +219,8 @@ static THD_FUNCTION(Imu_mean_value, arg) {
 }
 
 //start the threads
-void motors_speed_start(void)
-{
+void motors_speed_start(void){
+
 	chThdCreateStatic(waMotors_speed, sizeof(waMotors_speed), NORMALPRIO, Motors_speed, NULL);
 	chThdCreateStatic(waImu_mean_value, sizeof(waImu_mean_value), NORMALPRIO, Imu_mean_value, NULL);
 }

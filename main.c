@@ -14,63 +14,43 @@
 
 #include <chprintf.h>
 
+#define SLEEP_TIME			2000		//ms
+
 messagebus_t bus;
 MUTEX_DECL(bus_lock);
 CONDVAR_DECL(bus_condvar);
 
-static void serial_start(void)
-{
-    static SerialConfig ser_cfg = {
-        115200,
-        0,
-        0,
-        0,
-    };
-
-    sdStart(&SD3, &ser_cfg); // UART3. Connected to the second com port of the programmer
-}
-
 int main(void)
 {
-	// system initialization
+	//system initialization
     halInit();
     chSysInit();
     mpu_init();
 
-    // starting sensors
+    //starting sensors
     imu_start();
     proximity_start();
 
-    // communication initialization
-    serial_start();
-
+    //inits the motors
     motors_init();
 
-    // inits the inter process communication bus
+    //inits the inter process communication bus
     messagebus_init(&bus, &bus_lock, &bus_condvar);
 
     //wait 2 seconds to be sure the e-puck is in a stable position
-    chThdSleepMilliseconds(2000);
-
-    //calibrate the proximity sensors
-    calibrate_ir();
+    chThdSleepMilliseconds(SLEEP_TIME);
 
     //calibrate the imu
     calibrate_acc();
 
-    // start control of motors speed with imu and proximity sensors
+    //start control of motors speed with imu and proximity sensors
     motors_speed_start();
 
-    systime_t time1, time2;
-
     /* Infinite loop. */
-    while (true) {
-//    	chprintf((BaseSequentialStream *)&SD3, "calibrated of IR3 = %d   \r\n\n", get_calibrated_prox(5));
-
-//    	chprintf((BaseSequentialStream *)&SD3, "time = %d		\r\n\n", ST2MS(time2-time1);
-
+    while (true)
+    {
     	//waits 1 second
-        chThdSleepMilliseconds(1000);
+        chThdSleepMilliseconds(SLEEP_TIME);
     }
 }
 
